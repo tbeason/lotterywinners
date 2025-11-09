@@ -40,7 +40,7 @@ def scrape_all_powerball_history():
     dates = scraper.get_drawing_dates(start_date, end_date)
     print(f"Total drawings to scrape: {len(dates)}")
     sys.stdout.flush()
-    print(f"Estimated time: {len(dates) * 2 / 3600:.1f} hours (at 2 seconds per drawing)")
+    print(f"Estimated time: {len(dates) * 0.5 / 3600:.1f} hours (at 0.5 seconds per drawing)")
     print()
     sys.stdout.flush()
 
@@ -88,7 +88,7 @@ def scrape_all_powerball_history():
                 errors.append({'date': date, 'error': 'No data returned'})
 
             # Rate limiting - be nice to the server
-            time.sleep(2)  # 2 seconds between requests
+            time.sleep(0.5)  # 0.5 seconds between requests
 
         except Exception as e:
             errors.append({'date': date, 'error': str(e)})

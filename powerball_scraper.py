@@ -121,14 +121,16 @@ class PowerBallScraper:
 
                 if len(cells) >= 2 and idx < len(match_levels):
                     # Table structure:
-                    # [0] Match level (often empty), [1] Powerball Winners, [2] Powerball Prize,
-                    # [3] Power Play Winners (ignore), [4] Power Play Prize (ignore)
+                    # [0] Match level, [1] Powerball Winners, [2] Powerball Prize,
+                    # [3] Power Play Winners, [4] Power Play Prize
 
                     match_level = match_levels[idx]
                     pb_winners = cells[1].get_text(strip=True)
                     pb_prize = cells[2].get_text(strip=True) if len(cells) > 2 else ""
+                    pp_winners = cells[3].get_text(strip=True) if len(cells) > 3 else ""
+                    pp_prize = cells[4].get_text(strip=True) if len(cells) > 4 else ""
 
-                    # Extract regular Powerball data (ignore Power Play)
+                    # Extract regular Powerball data
                     if pb_winners and pb_winners.replace(',', '').isdigit():
                         pb_winners_num = pb_winners.replace(',', '')
 
@@ -141,10 +143,23 @@ class PowerBallScraper:
                         elif 'grand' in pb_prize.lower() or 'jackpot' in pb_prize.lower():
                             pb_prize_amount = "Jackpot"
 
+                        # Extract Power Play data if available
+                        pp_winners_num = None
+                        pp_prize_amount = None
+                        if pp_winners and pp_winners.replace(',', '').isdigit():
+                            pp_winners_num = pp_winners.replace(',', '')
+
+                            if '$' in pp_prize:
+                                prize_match = re.search(r'\$?([\d,]+)', pp_prize)
+                                if prize_match:
+                                    pp_prize_amount = prize_match.group(1).replace(',', '')
+
                         prize_data.append({
                             'match_level': match_level,
                             'winners': pb_winners_num,
-                            'prize_amount': pb_prize_amount
+                            'prize_amount': pb_prize_amount,
+                            'pp_winners': pp_winners_num,
+                            'pp_prize': pp_prize_amount
                         })
 
         return prize_data
@@ -236,15 +251,19 @@ class PowerBallScraper:
 
             # Add each match level's winner count as a separate column
             for prize in drawing.get('prize_levels', []):
-                # Convert match level to column name (e.g., "Match 5 + PB" -> "match_5_pb_winners")
-                col_name = prize['match_level'].lower().replace(' ', '_').replace('+', '').replace('_pb_', '_pb_')
-                col_name = col_name.replace('__', '_') + '_winners'
+                # Convert match level to column name (e.g., "Match 5 + PB" -> "match_5_pb")
+                base_col = prize['match_level'].lower().replace(' ', '_').replace('+', '').replace('_pb_', '_pb_')
+                base_col = base_col.replace('__', '_')
 
-                # Also add prize amount column
-                prize_col_name = col_name.replace('_winners', '_prize')
+                # Regular Powerball columns
+                row[base_col + '_winners'] = prize['winners']
+                row[base_col + '_prize'] = prize['prize_amount']
 
-                row[col_name] = prize['winners']
-                row[prize_col_name] = prize['prize_amount']
+                # Power Play columns (if available)
+                if prize.get('pp_winners') is not None:
+                    row[base_col + '_pp_winners'] = prize['pp_winners']
+                if prize.get('pp_prize') is not None:
+                    row[base_col + '_pp_prize'] = prize['pp_prize']
 
             rows.append(row)
 
@@ -253,17 +272,17 @@ class PowerBallScraper:
             # Create fieldnames with all possible columns
             fieldnames = ['date', 'jackpot', 'cash_value']
 
-            # Add match level columns in order
+            # Add match level columns in order (regular + Power Play)
             match_columns = [
-                'match_5_pb_winners', 'match_5_pb_prize',
-                'match_5_winners', 'match_5_prize',
-                'match_4_pb_winners', 'match_4_pb_prize',
-                'match_4_winners', 'match_4_prize',
-                'match_3_pb_winners', 'match_3_pb_prize',
-                'match_3_winners', 'match_3_prize',
-                'match_2_pb_winners', 'match_2_pb_prize',
-                'match_1_pb_winners', 'match_1_pb_prize',
-                'match_0_pb_winners', 'match_0_pb_prize'
+                'match_5_pb_winners', 'match_5_pb_prize', 'match_5_pb_pp_winners', 'match_5_pb_pp_prize',
+                'match_5_winners', 'match_5_prize', 'match_5_pp_winners', 'match_5_pp_prize',
+                'match_4_pb_winners', 'match_4_pb_prize', 'match_4_pb_pp_winners', 'match_4_pb_pp_prize',
+                'match_4_winners', 'match_4_prize', 'match_4_pp_winners', 'match_4_pp_prize',
+                'match_3_pb_winners', 'match_3_pb_prize', 'match_3_pb_pp_winners', 'match_3_pb_pp_prize',
+                'match_3_winners', 'match_3_prize', 'match_3_pp_winners', 'match_3_pp_prize',
+                'match_2_pb_winners', 'match_2_pb_prize', 'match_2_pb_pp_winners', 'match_2_pb_pp_prize',
+                'match_1_pb_winners', 'match_1_pb_prize', 'match_1_pb_pp_winners', 'match_1_pb_pp_prize',
+                'match_0_pb_winners', 'match_0_pb_prize', 'match_0_pb_pp_winners', 'match_0_pb_pp_prize'
             ]
 
             fieldnames.extend(match_columns)
