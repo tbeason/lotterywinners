@@ -14,6 +14,12 @@ import time
 import os
 import sys
 
+# Configure stdout encoding for Windows console compatibility
+if sys.platform == 'win32':
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+
 
 def scrape_all_powerball_history():
     """Scrape all PowerBall data from first drawing to present."""
