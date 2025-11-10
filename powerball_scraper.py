@@ -254,8 +254,12 @@ class PowerBallScraper:
             for prize in drawing.get('prize_levels', []):
                 # Convert match level to column name (e.g., "Match 5 + PB" -> "match_5_bonus")
                 # Unified schema: use "bonus" instead of "pb" or "mb"
-                base_col = prize['match_level'].lower().replace(' ', '_').replace('+', '').replace('_pb_', '_bonus_')
-                base_col = base_col.replace('__', '_')
+                base_col = prize['match_level'].lower()
+                base_col = base_col.replace(' pb', '_bonus')  # Replace ' PB' with '_bonus'
+                base_col = base_col.replace(' + ', '_')       # Replace ' + ' with '_'
+                base_col = base_col.replace(' ', '_')         # Replace remaining spaces
+                base_col = base_col.replace('+', '')          # Remove any remaining '+'
+                base_col = base_col.replace('__', '_')        # Clean up double underscores
 
                 # Regular columns
                 row[base_col + '_winners'] = prize['winners']
