@@ -28,6 +28,7 @@ date,error
 2005-03-26,'charmap' codec can't encode character '\u2192' in position 2: character maps to <undefined>
 2005-09-17,'charmap' codec can't encode character '\u2192' in position 2: character maps to <undefined>
 2006-03-11,'charmap' codec can't encode character '\u2192' in position 2: character maps to <undefined>
+2006-08-05,No data returned
 2006-09-02,'charmap' codec can't encode character '\u2192' in position 2: character maps to <undefined>
 2007-02-24,'charmap' codec can't encode character '\u2192' in position 2: character maps to <undefined>
 2007-08-18,'charmap' codec can't encode character '\u2192' in position 2: character maps to <undefined>
@@ -47,6 +48,11 @@ date,error
 2014-05-03,'charmap' codec can't encode character '\u2192' in position 2: character maps to <undefined>
 2014-10-25,'charmap' codec can't encode character '\u2192' in position 2: character maps to <undefined>
 2015-04-18,'charmap' codec can't encode character '\u2192' in position 2: character maps to <undefined>
+2015-04-25,No data returned
+2015-04-29,No data returned
+2015-05-16,No data returned
+2015-06-06,No data returned
+2015-06-13,No data returned
 2015-10-10,'charmap' codec can't encode character '\u2192' in position 2: character maps to <undefined>
 2016-04-02,'charmap' codec can't encode character '\u2192' in position 2: character maps to <undefined>
 2016-09-24,'charmap' codec can't encode character '\u2192' in position 2: character maps to <undefined>

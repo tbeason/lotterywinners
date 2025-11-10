@@ -47,16 +47,18 @@ def scrape_all_megamillions_history():
     # Check for existing partial data
     partial_file = 'megamillions_partial.csv'
     if os.path.exists(partial_file):
-        response = input(f"Found existing partial data file. Resume from there? (y/n): ")
-        if response.lower() == 'y':
-            # Load existing dates to skip
-            import csv
-            with open(partial_file, 'r') as f:
-                reader = csv.DictReader(f)
-                completed_dates = {row['date'] for row in reader}
-            dates = [d for d in dates if d not in completed_dates]
-            print(f"Resuming: {len(dates)} drawings remaining")
-            print()
+        # Automatically resume if partial file exists
+        print(f"Found existing partial data file. Resuming...")
+        sys.stdout.flush()
+        # Load existing dates to skip
+        import csv
+        with open(partial_file, 'r') as f:
+            reader = csv.DictReader(f)
+            completed_dates = {row['date'] for row in reader}
+        dates = [d for d in dates if d not in completed_dates]
+        print(f"Resuming: {len(dates)} drawings remaining")
+        print()
+        sys.stdout.flush()
 
     results = []
     errors = []
