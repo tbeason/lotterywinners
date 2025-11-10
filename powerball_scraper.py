@@ -244,6 +244,7 @@ class PowerBallScraper:
         rows = []
         for drawing in data:
             row = {
+                'lottery': 'powerball',
                 'date': drawing['date'],
                 'jackpot': drawing['jackpot'],
                 'cash_value': drawing['cash_value']
@@ -251,38 +252,40 @@ class PowerBallScraper:
 
             # Add each match level's winner count as a separate column
             for prize in drawing.get('prize_levels', []):
-                # Convert match level to column name (e.g., "Match 5 + PB" -> "match_5_pb")
-                base_col = prize['match_level'].lower().replace(' ', '_').replace('+', '').replace('_pb_', '_pb_')
+                # Convert match level to column name (e.g., "Match 5 + PB" -> "match_5_bonus")
+                # Unified schema: use "bonus" instead of "pb" or "mb"
+                base_col = prize['match_level'].lower().replace(' ', '_').replace('+', '').replace('_pb_', '_bonus_')
                 base_col = base_col.replace('__', '_')
 
-                # Regular Powerball columns
+                # Regular columns
                 row[base_col + '_winners'] = prize['winners']
                 row[base_col + '_prize'] = prize['prize_amount']
 
-                # Power Play columns (if available)
+                # Multiplier columns (if available) - unified schema uses "multiplier" instead of "pp"
                 if prize.get('pp_winners') is not None:
-                    row[base_col + '_pp_winners'] = prize['pp_winners']
+                    row[base_col + '_multiplier_winners'] = prize['pp_winners']
                 if prize.get('pp_prize') is not None:
-                    row[base_col + '_pp_prize'] = prize['pp_prize']
+                    row[base_col + '_multiplier_prize'] = prize['pp_prize']
 
             rows.append(row)
 
         # Write to CSV
         if rows:
-            # Create fieldnames with all possible columns
-            fieldnames = ['date', 'jackpot', 'cash_value']
+            # Create fieldnames with all possible columns (unified schema)
+            fieldnames = ['lottery', 'date', 'jackpot', 'cash_value']
 
-            # Add match level columns in order (regular + Power Play)
+            # Add match level columns in order (regular + multiplier)
+            # Unified schema uses "bonus" and "multiplier" instead of lottery-specific names
             match_columns = [
-                'match_5_pb_winners', 'match_5_pb_prize', 'match_5_pb_pp_winners', 'match_5_pb_pp_prize',
-                'match_5_winners', 'match_5_prize', 'match_5_pp_winners', 'match_5_pp_prize',
-                'match_4_pb_winners', 'match_4_pb_prize', 'match_4_pb_pp_winners', 'match_4_pb_pp_prize',
-                'match_4_winners', 'match_4_prize', 'match_4_pp_winners', 'match_4_pp_prize',
-                'match_3_pb_winners', 'match_3_pb_prize', 'match_3_pb_pp_winners', 'match_3_pb_pp_prize',
-                'match_3_winners', 'match_3_prize', 'match_3_pp_winners', 'match_3_pp_prize',
-                'match_2_pb_winners', 'match_2_pb_prize', 'match_2_pb_pp_winners', 'match_2_pb_pp_prize',
-                'match_1_pb_winners', 'match_1_pb_prize', 'match_1_pb_pp_winners', 'match_1_pb_pp_prize',
-                'match_0_pb_winners', 'match_0_pb_prize', 'match_0_pb_pp_winners', 'match_0_pb_pp_prize'
+                'match_5_bonus_winners', 'match_5_bonus_prize', 'match_5_bonus_multiplier_winners', 'match_5_bonus_multiplier_prize',
+                'match_5_winners', 'match_5_prize', 'match_5_multiplier_winners', 'match_5_multiplier_prize',
+                'match_4_bonus_winners', 'match_4_bonus_prize', 'match_4_bonus_multiplier_winners', 'match_4_bonus_multiplier_prize',
+                'match_4_winners', 'match_4_prize', 'match_4_multiplier_winners', 'match_4_multiplier_prize',
+                'match_3_bonus_winners', 'match_3_bonus_prize', 'match_3_bonus_multiplier_winners', 'match_3_bonus_multiplier_prize',
+                'match_3_winners', 'match_3_prize', 'match_3_multiplier_winners', 'match_3_multiplier_prize',
+                'match_2_bonus_winners', 'match_2_bonus_prize', 'match_2_bonus_multiplier_winners', 'match_2_bonus_multiplier_prize',
+                'match_1_bonus_winners', 'match_1_bonus_prize', 'match_1_bonus_multiplier_winners', 'match_1_bonus_multiplier_prize',
+                'match_0_bonus_winners', 'match_0_bonus_prize', 'match_0_bonus_multiplier_winners', 'match_0_bonus_multiplier_prize'
             ]
 
             fieldnames.extend(match_columns)
