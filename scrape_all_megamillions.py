@@ -81,7 +81,7 @@ def scrape_all_megamillions_history():
                 # Auto-save every N drawings
                 if i % save_interval == 0:
                     scraper.save_to_csv(results, partial_file)
-                    print(f"  → Auto-saved {len(results)} drawings to {partial_file}")
+                    print(f"  >> Auto-saved {len(results)} drawings to {partial_file}")
                     sys.stdout.flush()
 
             else:
