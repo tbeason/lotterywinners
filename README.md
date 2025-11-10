@@ -1,15 +1,30 @@
-# PowerBall Historical Data Scraper
+# Lottery Historical Data Scrapers
 
-Python scripts to scrape PowerBall drawing results from powerball.com.
+Python scripts to scrape PowerBall and MegaMillions drawing results from their official websites.
 
 ## Features
 
-- Fetch PowerBall drawing results by date
-- Extract estimated jackpot amounts and cash values
-- Get number of winners at each prize level (Match 5 + PB, Match 5, Match 4 + PB, etc.)
-- Export data to CSV format (one row per date)
-- Scrape historical data across date ranges
-- Automatically identifies drawing dates (Monday, Wednesday, Saturday)
+### PowerBall Scraper
+- Fetch PowerBall drawing results from powerball.com
+- Historical data from April 22, 1992 to present
+- Drawing schedule: Wed/Sat (before Aug 23, 2021), Mon/Wed/Sat (after)
+- Includes Power Play multiplier data
+
+### MegaMillions Scraper
+- Fetch MegaMillions drawing results from megamillions.com
+- Historical data from February 2, 2010 to present
+- Drawing schedule: Tuesday and Friday
+- Includes Megaplier multiplier data
+- Uses Selenium to handle JavaScript-rendered pages
+
+### Both Scrapers Include
+- Estimated jackpot amounts and cash values
+- Number of winners at each prize level (9 levels total)
+- Multiplier winner data (Power Play / Megaplier)
+- **Unified CSV schema** - both lotteries use identical column names
+- Export to CSV format (one row per date)
+- Automatic date range scraping
+- Resume capability for long-running scrapes
 
 ## Installation
 
@@ -19,9 +34,11 @@ Python scripts to scrape PowerBall drawing results from powerball.com.
 pip install -r requirements.txt
 ```
 
+For MegaMillions scraping, you'll also need Chrome browser installed (Selenium will manage the ChromeDriver automatically).
+
 ## Usage
 
-### Quick Start
+### Quick Start - PowerBall
 
 Run the example script:
 
@@ -29,9 +46,19 @@ Run the example script:
 python powerball_scraper.py
 ```
 
-This will fetch the most recent drawing and scrape historical data from October 1 to November 5, 2025.
+This will fetch a recent drawing and scrape historical data from October 1 to November 5, 2024.
 
-### Custom Date Range
+### Quick Start - MegaMillions
+
+Run the example script:
+
+```bash
+python megamillions_scraper.py
+```
+
+This will fetch a recent drawing and scrape historical data from October 1 to November 8, 2024.
+
+### Custom Date Range - PowerBall
 
 ```python
 from powerball_scraper import PowerBallScraper
@@ -45,63 +72,146 @@ data = scraper.scrape_historical_data('2024-01-01', '2024-12-31')
 scraper.save_to_csv(data, 'powerball_2024.csv')
 ```
 
+### Custom Date Range - MegaMillions
+
+```python
+from megamillions_scraper import MegaMillionsScraper
+
+with MegaMillionsScraper(headless=True) as scraper:
+    # Scrape data from January 1 to December 31, 2024
+    data = scraper.scrape_historical_data('2024-01-01', '2024-12-31')
+
+    # Save to CSV
+    scraper.save_to_csv(data, 'megamillions_2024.csv')
+```
+
 ### Single Drawing
 
 ```python
 from powerball_scraper import PowerBallScraper
+from megamillions_scraper import MegaMillionsScraper
 
-scraper = PowerBallScraper()
+# PowerBall
+pb_scraper = PowerBallScraper()
+result = pb_scraper.get_drawing_data('2024-10-01')
+print(f"PowerBall Jackpot: {result['jackpot']}")
 
-# Get specific drawing
-result = scraper.get_drawing_data('2025-10-01')
-
-print(f"Jackpot: {result['jackpot']}")
-print(f"Cash Value: {result['cash_value']}")
-print(f"Number of prize levels: {len(result['prize_levels'])}")
+# MegaMillions
+with MegaMillionsScraper() as mm_scraper:
+    result = mm_scraper.get_drawing_data('2024-10-01')
+    print(f"MegaMillions Jackpot: {result['jackpot']}")
 ```
 
-### See More Examples
+### Full Historical Scrape
 
-Check out `example_usage.py` for more detailed examples.
+```bash
+# PowerBall (1992-present, ~3,722 drawings)
+python scrape_all_history.py
 
-## Output Format
+# MegaMillions (2010-present, ~1,646 drawings)
+python scrape_all_megamillions.py
+```
 
-The CSV file contains one row per drawing date with the following columns:
+## Unified CSV Schema
 
-### Basic Information
+Both scrapers now use an identical, unified schema for easy data combination and analysis.
+
+### Basic Columns
+- `lottery`: Lottery identifier ("powerball" or "megamillions")
 - `date`: Drawing date (YYYY-MM-DD)
 - `jackpot`: Estimated jackpot amount (e.g., "175 Million")
 - `cash_value`: Cash alternative value (e.g., "81.2 Million")
 
-### Match Level Winners (9 prize levels)
-For each match level, there are two columns:
-- `match_X_winners`: Number of winners at this level
-- `match_X_prize`: Prize amount for this level
+### Match Level Columns (9 prize levels)
 
-Match levels:
-- `match_5_pb`: Match 5 + Powerball (Grand Prize)
-- `match_5`: Match 5 white balls ($1 Million)
-- `match_4_pb`: Match 4 + Powerball ($50,000)
-- `match_4`: Match 4 white balls ($100)
-- `match_3_pb`: Match 3 + Powerball ($100)
-- `match_3`: Match 3 white balls ($7)
-- `match_2_pb`: Match 2 + Powerball ($7)
-- `match_1_pb`: Match 1 + Powerball ($4)
-- `match_0_pb`: Powerball only ($4)
+Each match level has 4 columns:
+- `match_X_winners`: Number of regular winners
+- `match_X_prize`: Prize amount for regular winners
+- `match_X_multiplier_winners`: Number of multiplier winners (Power Play / Megaplier)
+- `match_X_multiplier_prize`: Prize amount for multiplier winners
+
+**Match Levels:**
+1. `match_5_bonus`: Match 5 + bonus ball (PowerBall/MegaBall) - **Jackpot**
+2. `match_5`: Match 5 white balls only - **$1 Million**
+3. `match_4_bonus`: Match 4 + bonus ball
+4. `match_4`: Match 4 white balls
+5. `match_3_bonus`: Match 3 + bonus ball
+6. `match_3`: Match 3 white balls
+7. `match_2_bonus`: Match 2 + bonus ball
+8. `match_1_bonus`: Match 1 + bonus ball
+9. `match_0_bonus`: Match 0 + bonus ball only
+
+### Total: 40 columns
+- 4 base columns (lottery, date, jackpot, cash_value)
+- 36 match level columns (9 levels × 4 columns each)
 
 ### Example CSV Row
+```csv
+lottery,date,jackpot,cash_value,match_5_bonus_winners,match_5_bonus_prize,...
+powerball,2024-10-01,175 Million,81.2 Million,0,Jackpot,0,,1,1000000,0,2000000,...
+megamillions,2024-10-01,93 Million,46.4 Million,0,Jackpot,,,1,1,0,2,...
 ```
-date,jackpot,cash_value,match_5_pb_winners,match_5_pb_prize,match_5_winners,match_5_prize,...
-2025-10-01,175 Million,81.2 Million,0,Jackpot,1,1000000,15,50000,256,100,...
-```
+
+## Data Sources
+
+- **PowerBall**: Scrapes from powerball.com using BeautifulSoup (server-side rendered)
+- **MegaMillions**: Scrapes from megamillions.com using Selenium (JavaScript-rendered)
+
+## Drawing Schedules
+
+### PowerBall
+- **Before August 23, 2021**: Wednesday and Saturday only
+- **From August 23, 2021 onwards**: Monday, Wednesday, and Saturday
+- **First drawing**: April 22, 1992
+- **Total historical drawings**: ~3,722
+
+### MegaMillions
+- **Schedule**: Tuesday and Friday (consistent since 2010)
+- **First available data**: February 2, 2010
+- **Total historical drawings**: ~1,646
+
+## Key Differences Between Lotteries
+
+| Feature | PowerBall | MegaMillions |
+|---------|-----------|--------------|
+| **Scraping method** | BeautifulSoup (simple HTTP) | Selenium (JavaScript rendering) |
+| **Historical start** | April 22, 1992 | February 2, 2010 |
+| **Drawing days** | Mon/Wed/Sat (Wed/Sat before 2021) | Tue/Fri |
+| **Bonus ball name** | PowerBall | MegaBall |
+| **Multiplier name** | Power Play | Megaplier |
+| **CSV schema** | **Unified** (same as MegaMillions) | **Unified** (same as PowerBall) |
+
+## Schema Benefits
+
+The unified schema provides several advantages:
+
+1. **Easy data combination**: Merge PowerBall and MegaMillions data into a single dataset
+2. **Consistent analysis**: Same column names work for both lotteries
+3. **Clear identification**: `lottery` column distinguishes the games
+4. **Future-proof**: Easy to add more lotteries with the same schema
 
 ## Notes
 
-- **PowerBall Drawing Schedule:**
-  - Before August 23, 2021: Wednesday and Saturday only
-  - From August 23, 2021 onwards: Monday, Wednesday, and Saturday
-- The scraper automatically filters to only scrape on drawing dates based on the correct historical schedule
 - Prize amounts may vary over time, but match levels remain consistent
-- First PowerBall drawing: April 22, 1992
-- Historical data availability depends on powerball.com's archive
-- The script respects the server and includes appropriate user-agent headers
+- Power Play/Megaplier data is included when available
+- The scrapers respect servers with appropriate rate limiting (0.5s between requests)
+- Both scrapers include auto-save functionality (every 50 drawings)
+- Resume capability allows interrupted scrapes to continue from where they left off
+- MegaMillions scraper requires Chrome browser (ChromeDriver managed automatically)
+
+## Files
+
+- `powerball_scraper.py` - PowerBall scraper class
+- `megamillions_scraper.py` - MegaMillions scraper class (with Selenium)
+- `scrape_all_history.py` - Full PowerBall historical scraper
+- `scrape_all_megamillions.py` - Full MegaMillions historical scraper
+- `requirements.txt` - Python dependencies
+- `SCHEMA_DESIGN.md` - Detailed schema design documentation
+
+## Complete Historical Datasets
+
+The repository includes complete historical datasets:
+- `powerball_all_history.csv` - 3,722 drawings (1992-04-22 to present)
+- `megamillions_all_history.csv` - 1,646 drawings (2010-02-02 to present)
+
+Both use the unified schema format.
