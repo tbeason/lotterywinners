@@ -3,322 +3,155 @@ PowerBall Historical Data Scraper
 
 Scrapes PowerBall drawing results from powerball.com including:
 - Date of drawing
-- Estimated jackpot amount
-- Number of winners at each prize level
+- Estimated jackpot amount and cash value
+- Number of winners and prize at each prize level, with and without Power Play
 """
 
-import requests
-from bs4 import BeautifulSoup
-from datetime import datetime, timedelta
-import csv
 import re
-from typing import Dict, List, Optional
+from datetime import date, datetime
+from typing import Dict, Iterable, Optional
+
+from bs4 import BeautifulSoup
+
+from lottery_common import (
+    JACKPOT_PRIZE, MATCH_LEVELS, LotteryScraper, ScrapeError,
+    format_white_balls, parse_count, parse_date, parse_money,
+)
 
 
-class PowerBallScraper:
+class PowerBallScraper(LotteryScraper):
     """Scraper for PowerBall drawing results."""
 
+    LOTTERY = 'powerball'
     BASE_URL = "https://www.powerball.com/draw-result"
-    DRAWING_DAYS = [0, 2, 5]  # Monday=0, Wednesday=2, Saturday=5
+    FIRST_DRAWING = '1992-04-22'
+    MONDAY_DRAWINGS_START = date(2021, 8, 23)
 
-    def __init__(self):
-        self.session = requests.Session()
-        self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-        })
+    # Row classes like "m5-pb" (match 5 + Powerball) or "m4" (match 4)
+    _LEVEL_CLASS_RE = re.compile(r'^m(\d)(-pb)?$')
+    _LEVEL_BY_BALLS = {(white, bonus): name for name, white, bonus in MATCH_LEVELS}
 
-    def get_drawing_data(self, date: str) -> Optional[Dict]:
+    def drawing_days(self, day: date) -> Iterable[int]:
+        # Wednesday/Saturday, plus Monday from 2021-08-23
+        return (0, 2, 5) if day >= self.MONDAY_DRAWINGS_START else (2, 5)
+
+    def get_drawing_data(self, date_str: str) -> Optional[Dict]:
         """
         Fetch drawing data for a specific date.
 
         Args:
-            date: Date string in format 'YYYY-MM-DD'
+            date_str: Date string in format 'YYYY-MM-DD'
 
         Returns:
-            Dictionary containing drawing data or None if request fails
+            Row keyed by CSV_COLUMNS, or None if there was no drawing that day
         """
-        url = f"{self.BASE_URL}?gc=powerball&date={date}"
+        response = self.session.get(
+            self.BASE_URL, params={'gc': 'powerball', 'date': date_str}, timeout=30
+        )
+        response.raise_for_status()
+        return self.parse_page(response.content, date_str)
 
-        try:
-            response = self.session.get(url, timeout=30)
-            response.raise_for_status()
+    def parse_page(self, html: bytes, date_str: str) -> Optional[Dict]:
+        """Parse a draw-result page into a row."""
+        soup = BeautifulSoup(html, 'html.parser')
 
-            soup = BeautifulSoup(response.content, 'html.parser')
-
-            # Extract data
-            data = {
-                'date': date,
-                'jackpot': self._extract_jackpot(soup),
-                'cash_value': self._extract_cash_value(soup),
-                'prize_levels': self._extract_prize_levels(soup)
-            }
-
-            return data
-
-        except requests.RequestException as e:
-            print(f"Error fetching data for {date}: {e}")
+        # For a date with no drawing the site shows the nearest earlier drawing instead
+        title = soup.find(class_='title-date')
+        if title is None:
+            raise ScrapeError('draw date not found on page')
+        shown = datetime.strptime(title.get_text(strip=True), '%a, %b %d, %Y').date()
+        if shown != parse_date(date_str):
             return None
 
-    def _extract_jackpot(self, soup: BeautifulSoup) -> str:
-        """Extract estimated jackpot amount."""
-        # Look for jackpot text patterns
-        jackpot_patterns = [
-            re.compile(r'Estimated Jackpot:\s*\$?([\d,.]+ Million)', re.IGNORECASE),
-            re.compile(r'\$?([\d,.]+ Million)', re.IGNORECASE)
-        ]
+        row = self.new_row(
+            date_str,
+            jackpot=self._labeled_amount(soup, 'estimated-jackpot'),
+            cash_value=self._labeled_amount(soup, 'cash-value'),
+        )
+        self._fill_numbers(soup, row)
+        self._fill_prize_levels(soup, row)
+        return row
 
-        text = soup.get_text()
-        for pattern in jackpot_patterns:
-            match = pattern.search(text)
-            if match:
-                return match.group(1).strip()
-
-        return "N/A"
-
-    def _extract_cash_value(self, soup: BeautifulSoup) -> str:
-        """Extract cash alternative value."""
-        cash_patterns = [
-            re.compile(r'Cash[^:]*:\s*\$?([\d,.]+ Million)', re.IGNORECASE),
-            re.compile(r'cash alternative[^:]*:\s*\$?([\d,.]+ Million)', re.IGNORECASE)
-        ]
-
-        text = soup.get_text()
-        for pattern in cash_patterns:
-            match = pattern.search(text)
-            if match:
-                return match.group(1).strip()
-
-        return "N/A"
-
-    def _extract_prize_levels(self, soup: BeautifulSoup) -> List[Dict]:
-        """Extract number of winners at each prize level."""
-        prize_data = []
-
-        # PowerBall match levels in order (as they appear in the table)
-        match_levels = [
-            'Match 5 + PB',     # Row 0: Grand Prize / Jackpot
-            'Match 5',          # Row 1: $1 Million
-            'Match 4 + PB',     # Row 2: $50,000
-            'Match 4',          # Row 3: $100
-            'Match 3 + PB',     # Row 4: $100
-            'Match 3',          # Row 5: $7
-            'Match 2 + PB',     # Row 6: $7
-            'Match 1 + PB',     # Row 7: $4
-            'Match 0 + PB',     # Row 8: $4 (Powerball only)
-        ]
-
-        # Look for the winners table (class contains 'winners-table')
-        table = soup.find('table', class_=re.compile(r'winners-table', re.IGNORECASE))
-
-        if table:
-            rows = table.find_all('tr')
-
-            # Skip header row (first row)
-            data_rows = rows[1:]
-
-            for idx, row in enumerate(data_rows):
-                cells = row.find_all(['td', 'th'])
-
-                if len(cells) >= 2 and idx < len(match_levels):
-                    # Table structure:
-                    # [0] Match level, [1] Powerball Winners, [2] Powerball Prize,
-                    # [3] Power Play Winners, [4] Power Play Prize
-
-                    match_level = match_levels[idx]
-                    pb_winners = cells[1].get_text(strip=True)
-                    pb_prize = cells[2].get_text(strip=True) if len(cells) > 2 else ""
-                    pp_winners = cells[3].get_text(strip=True) if len(cells) > 3 else ""
-                    pp_prize = cells[4].get_text(strip=True) if len(cells) > 4 else ""
-
-                    # Extract regular Powerball data
-                    if pb_winners and pb_winners.replace(',', '').isdigit():
-                        pb_winners_num = pb_winners.replace(',', '')
-
-                        # Extract prize amount
-                        pb_prize_amount = "Jackpot"
-                        if '$' in pb_prize:
-                            prize_match = re.search(r'\$?([\d,]+)', pb_prize)
-                            if prize_match:
-                                pb_prize_amount = prize_match.group(1).replace(',', '')
-                        elif 'grand' in pb_prize.lower() or 'jackpot' in pb_prize.lower():
-                            pb_prize_amount = "Jackpot"
-
-                        # Extract Power Play data if available
-                        pp_winners_num = None
-                        pp_prize_amount = None
-                        if pp_winners and pp_winners.replace(',', '').isdigit():
-                            pp_winners_num = pp_winners.replace(',', '')
-
-                            if '$' in pp_prize:
-                                prize_match = re.search(r'\$?([\d,]+)', pp_prize)
-                                if prize_match:
-                                    pp_prize_amount = prize_match.group(1).replace(',', '')
-
-                        prize_data.append({
-                            'match_level': match_level,
-                            'winners': pb_winners_num,
-                            'prize_amount': pb_prize_amount,
-                            'pp_winners': pp_winners_num,
-                            'pp_prize': pp_prize_amount
-                        })
-
-        return prize_data
-
-    def get_drawing_dates(self, start_date: str, end_date: str) -> List[str]:
-        """
-        Generate list of PowerBall drawing dates between start and end dates.
-
-        Schedule history:
-        - Before 2021-08-23: Wednesday and Saturday only
-        - From 2021-08-23 onwards: Monday, Wednesday, and Saturday
-
-        Args:
-            start_date: Start date in format 'YYYY-MM-DD'
-            end_date: End date in format 'YYYY-MM-DD'
-
-        Returns:
-            List of date strings in format 'YYYY-MM-DD'
-        """
-        start = datetime.strptime(start_date, '%Y-%m-%d')
-        end = datetime.strptime(end_date, '%Y-%m-%d')
-
-        # Date when Monday drawings started
-        monday_start = datetime.strptime('2021-08-23', '%Y-%m-%d')
-
-        dates = []
-        current = start
-
-        while current <= end:
-            # Determine which days are drawing days based on the date
-            if current < monday_start:
-                # Before 2021-08-23: Wednesday (2) and Saturday (5) only
-                drawing_days = [2, 5]
-            else:
-                # From 2021-08-23 onwards: Monday (0), Wednesday (2), Saturday (5)
-                drawing_days = [0, 2, 5]
-
-            if current.weekday() in drawing_days:
-                dates.append(current.strftime('%Y-%m-%d'))
-            current += timedelta(days=1)
-
-        return dates
-
-    def scrape_historical_data(self, start_date: str, end_date: str) -> List[Dict]:
-        """
-        Scrape PowerBall data for a date range.
-
-        Args:
-            start_date: Start date in format 'YYYY-MM-DD'
-            end_date: End date in format 'YYYY-MM-DD'
-
-        Returns:
-            List of drawing data dictionaries
-        """
-        dates = self.get_drawing_dates(start_date, end_date)
-        results = []
-
-        print(f"Scraping {len(dates)} drawings from {start_date} to {end_date}...")
-
-        for i, date in enumerate(dates, 1):
-            print(f"Fetching {i}/{len(dates)}: {date}", end='\r')
-            data = self.get_drawing_data(date)
-            if data:
-                results.append(data)
-
-        print(f"\nCompleted! Retrieved {len(results)} drawings.")
-        return results
-
-    def save_to_csv(self, data: List[Dict], filename: str = 'powerball_data.csv'):
-        """
-        Save scraped data to CSV file with one row per date.
-
-        Args:
-            data: List of drawing data dictionaries
-            filename: Output CSV filename
-        """
-        if not data:
-            print("No data to save.")
+    @staticmethod
+    def _fill_numbers(soup: BeautifulSoup, row: Dict):
+        """Winning numbers and Power Play (the site doesn't show numbers for early drawings)."""
+        group = soup.find(class_='number-group-powerball')
+        whites = [parse_count(b.get_text()) for b in group.find_all(class_='white-balls')] if group else []
+        bonus = group.find(class_='powerball') if group else None
+        if not whites:
             return
+        if len(whites) != 5 or None in whites or bonus is None:
+            raise ScrapeError(f'unexpected winning numbers: {whites}')
+        row['white_balls'] = format_white_balls(whites)
+        row['bonus_ball'] = parse_count(bonus.get_text())
+        multiplier = soup.find(class_='multiplier')
+        if multiplier is not None:
+            row['multiplier'] = parse_count(multiplier.get_text(strip=True).rstrip('xX'))
 
-        # Prepare rows for CSV - one row per date
-        rows = []
-        for drawing in data:
-            row = {
-                'lottery': 'powerball',
-                'date': drawing['date'],
-                'jackpot': drawing['jackpot'],
-                'cash_value': drawing['cash_value']
-            }
+    @staticmethod
+    def _labeled_amount(soup: BeautifulSoup, css_class: str) -> str:
+        """Text of e.g. <div class="estimated-jackpot"><span>Label:</span><span>$2.04 Billion</span>."""
+        container = soup.find(class_=css_class)
+        if container is None:
+            return 'N/A'  # cash value wasn't published before 1997
+        for span in container.find_all('span'):
+            if 'prize-label' not in (span.get('class') or []):
+                return span.get_text(strip=True).lstrip('$') or 'N/A'
+        return 'N/A'
 
-            # Add each match level's winner count as a separate column
-            for prize in drawing.get('prize_levels', []):
-                # Convert match level to column name (e.g., "Match 5 + PB" -> "match_5_bonus")
-                # Unified schema: use "bonus" instead of "pb" or "mb"
-                base_col = prize['match_level'].lower()
-                base_col = base_col.replace(' pb', '_bonus')  # Replace ' PB' with '_bonus'
-                base_col = base_col.replace(' + ', '_')       # Replace ' + ' with '_'
-                base_col = base_col.replace(' ', '_')         # Replace remaining spaces
-                base_col = base_col.replace('+', '')          # Remove any remaining '+'
-                base_col = base_col.replace('__', '_')        # Clean up double underscores
+    def _fill_prize_levels(self, soup: BeautifulSoup, row: Dict):
+        table = soup.find('table', class_='winners-table')
+        if table is None:
+            raise ScrapeError('winners table not found')
 
-                # Regular columns
-                row[base_col + '_winners'] = prize['winners']
-                row[base_col + '_prize'] = prize['prize_amount']
+        # Columns: match level, Powerball winners, prize, Power Play winners, prize
+        # (the Power Play columns are absent before it was introduced in 2001)
+        found = set()
+        for tr in table.find_all('tr'):
+            cells = tr.find_all('td')
+            if not cells:
+                continue  # header row
+            level = self._row_level(cells[0])
+            texts = [c.get_text(strip=True) for c in cells] + [''] * 5
 
-                # Multiplier columns (if available) - unified schema uses "multiplier" instead of "pp"
-                if prize.get('pp_winners') is not None:
-                    row[base_col + '_multiplier_winners'] = prize['pp_winners']
-                if prize.get('pp_prize') is not None:
-                    row[base_col + '_multiplier_prize'] = prize['pp_prize']
+            row[f'{level}_winners'] = parse_count(texts[1])
+            if level == 'match_5_bonus':
+                row[f'{level}_prize'] = JACKPOT_PRIZE
+            else:
+                row[f'{level}_prize'] = parse_money(texts[2])
 
-            rows.append(row)
+            multiplier_winners = parse_count(texts[3])
+            if multiplier_winners is not None:
+                row[f'{level}_multiplier_winners'] = multiplier_winners
+                row[f'{level}_multiplier_prize'] = parse_money(texts[4])
+            found.add(level)
 
-        # Write to CSV
-        if rows:
-            # Create fieldnames with all possible columns (unified schema)
-            fieldnames = ['lottery', 'date', 'jackpot', 'cash_value']
+        if len(found) != len(MATCH_LEVELS):
+            raise ScrapeError(f'expected {len(MATCH_LEVELS)} prize levels, found {len(found)}')
 
-            # Add match level columns in order (regular + multiplier)
-            # Unified schema uses "bonus" and "multiplier" instead of lottery-specific names
-            match_columns = [
-                'match_5_bonus_winners', 'match_5_bonus_prize', 'match_5_bonus_multiplier_winners', 'match_5_bonus_multiplier_prize',
-                'match_5_winners', 'match_5_prize', 'match_5_multiplier_winners', 'match_5_multiplier_prize',
-                'match_4_bonus_winners', 'match_4_bonus_prize', 'match_4_bonus_multiplier_winners', 'match_4_bonus_multiplier_prize',
-                'match_4_winners', 'match_4_prize', 'match_4_multiplier_winners', 'match_4_multiplier_prize',
-                'match_3_bonus_winners', 'match_3_bonus_prize', 'match_3_bonus_multiplier_winners', 'match_3_bonus_multiplier_prize',
-                'match_3_winners', 'match_3_prize', 'match_3_multiplier_winners', 'match_3_multiplier_prize',
-                'match_2_bonus_winners', 'match_2_bonus_prize', 'match_2_bonus_multiplier_winners', 'match_2_bonus_multiplier_prize',
-                'match_1_bonus_winners', 'match_1_bonus_prize', 'match_1_bonus_multiplier_winners', 'match_1_bonus_multiplier_prize',
-                'match_0_bonus_winners', 'match_0_bonus_prize', 'match_0_bonus_multiplier_winners', 'match_0_bonus_multiplier_prize'
-            ]
-
-            fieldnames.extend(match_columns)
-
-            with open(filename, 'w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
-                writer.writeheader()
-                writer.writerows(rows)
-
-            print(f"Data saved to {filename}")
+    def _row_level(self, match_cell) -> str:
+        """Map a row's match-level cell to a MATCH_LEVELS name via its ball-group CSS class."""
+        balls = match_cell.find(class_='game-balls')
+        for css_class in (balls.get('class') if balls else None) or []:
+            m = self._LEVEL_CLASS_RE.match(css_class)
+            if m:
+                return self._LEVEL_BY_BALLS[(int(m.group(1)), bool(m.group(2)))]
+        raise ScrapeError('unrecognized prize level row')
 
 
 def main():
     """Example usage."""
     scraper = PowerBallScraper()
 
-    # Example: Get single drawing
-    print("Fetching single drawing (2025-11-05)...")
-    single_result = scraper.get_drawing_data('2025-11-05')
+    print("Fetching single drawing (2025-11-24)...")
+    single_result = scraper.get_drawing_data('2025-11-24')
     if single_result:
         print(f"Jackpot: {single_result['jackpot']}")
         print(f"Cash Value: {single_result['cash_value']}")
-        print(f"Prize Levels: {len(single_result['prize_levels'])}")
+        print(f"Match 5 winners: {single_result['match_5_winners']}")
 
-    # Example: Get historical data
     print("\nFetching historical data...")
     historical_data = scraper.scrape_historical_data('2025-10-01', '2025-11-05')
-
-    # Save to CSV
     scraper.save_to_csv(historical_data, 'powerball_historical.csv')
 
 

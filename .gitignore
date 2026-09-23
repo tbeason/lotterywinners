@@ -8,10 +8,13 @@ env/
 venv/
 *.egg-info/
 
-# Data files
+# Data files (the committed history datasets and test fixtures are whitelisted)
 *.csv
+!*_all_history.csv
+*.tmp
 *.html
 *.json
+!tests/fixtures/*
 
 # IDE
 .vscode/
