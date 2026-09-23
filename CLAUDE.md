@@ -23,9 +23,10 @@ python megamillions_scraper.py
 python scrape_all_history.py         # PowerBall: 1992-present
 python scrape_all_megamillions.py    # MegaMillions: 2010-present
 
-# Re-scrape everything, or specific dates
+# Re-scrape everything, specific dates, or the last N days
 python scrape_all_history.py --full
 python scrape_all_history.py --dates 2022-11-07 2016-01-13
+python scrape_all_history.py --recent 7
 
 # Cross-check numbers and drawing dates against data.ny.gov (exit 1 on discrepancies)
 python validate_against_ny.py
@@ -83,6 +84,13 @@ so tests can run it on saved fixtures.
   `match_3`, `match_2_bonus`, `match_1_bonus`, `match_0_bonus`
 
 See `SCHEMA_DESIGN.md` for column semantics per lottery and era.
+
+### Daily update workflow (`.github/workflows/update-data.yml`)
+
+- Runs daily at 14:00 UTC (and on `workflow_dispatch`): tests, then both scrape scripts with
+  `--end <yesterday> --recent 7`, then `validate_against_ny.py`, then commits changed CSVs to `main`
+- Any failing step stops the run before the commit
+- On pull requests touching the code it runs the same steps against the live sites but doesn't commit
 
 ### Validation (`validate_against_ny.py`)
 

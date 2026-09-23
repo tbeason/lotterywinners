@@ -245,6 +245,9 @@ def run_history_scrape(scraper: LotteryScraper, first_drawing: str, output_file:
                         help='re-scrape every drawing instead of only missing ones')
     parser.add_argument('--dates', nargs='+', default=[], metavar='YYYY-MM-DD',
                         help='also re-scrape these specific dates')
+    parser.add_argument('--recent', type=int, default=0, metavar='DAYS',
+                        help='also re-scrape drawings from the last DAYS days, in case '
+                             'their winner counts were updated after the first scrape')
     parser.add_argument('--start', default=first_drawing, help='first date to consider')
     parser.add_argument('--end', default=date.today().isoformat(), help='last date to consider')
     parser.add_argument('--delay', type=float, default=0.5, help='seconds between requests')
@@ -269,7 +272,9 @@ def run_history_scrape(scraper: LotteryScraper, first_drawing: str, output_file:
         todo = scheduled
     else:
         todo = [d for d in scheduled if d not in rows]
-    for d in args.dates:
+    recent_start = (parse_date(args.end) - timedelta(days=args.recent)).isoformat()
+    refresh = [d for d in scheduled if args.recent and d > recent_start]
+    for d in args.dates + refresh:
         parse_date(d)  # validate format
         if d not in todo:
             todo.append(d)

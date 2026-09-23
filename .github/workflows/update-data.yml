@@ -1,0 +1,72 @@
+name: Update lottery data
+
+on:
+  schedule:
+    # Daily at 14:00 UTC (10am ET): after the previous night's drawings
+    # (PowerBall Mon/Wed/Sat, MegaMillions Tue/Fri, ~11pm ET) have posted results
+    - cron: '0 14 * * *'
+  workflow_dispatch:
+  pull_request:
+    # Check scraper changes against the live sites; nothing is committed
+    paths:
+      - '*.py'
+      - 'requirements.txt'
+      - 'tests/**'
+      - '.github/workflows/update-data.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-data-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run tests
+        run: python -m unittest discover tests
+
+      - name: Scrape new drawings
+        # Through yesterday (today's drawings haven't happened yet), and re-scrape
+        # the last week in case winner counts were revised after the first scrape
+        run: |
+          END=$(date -u -d yesterday +%F)
+          python scrape_all_history.py --end "$END" --recent 7
+          python scrape_all_megamillions.py --end "$END" --recent 7
+
+      - name: Show scraping errors
+        if: always()
+        run: cat *_scraping_errors.csv 2>/dev/null || echo "No scraping errors"
+
+      - name: Validate against data.ny.gov
+        run: python validate_against_ny.py
+
+      - name: Commit updated data
+        if: github.event_name != 'pull_request'
+        run: |
+          git add powerball_all_history.csv megamillions_all_history.csv
+          if git diff --cached --quiet; then
+            echo "No new data"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898299+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Update lottery data through $(date -u -d yesterday +%F)"
+          git push
+
+      - name: Show data changes (pull requests)
+        if: github.event_name == 'pull_request'
+        run: git diff --stat

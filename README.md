@@ -119,10 +119,25 @@ brings the dataset up to date. Options:
 python scrape_all_history.py --full                          # re-scrape every drawing
 python scrape_all_history.py --dates 2022-11-07 2016-01-13   # re-scrape specific dates
 python scrape_all_history.py --start 2024-01-01 --end 2024-12-31
+python scrape_all_history.py --recent 7                      # also refresh the last week
 ```
 
 Progress is saved to `*_partial.csv` every 50 drawings (and on Ctrl+C); the next run resumes
 from it. Dates that fail are listed in `*_scraping_errors.csv`.
+
+### Automatic Daily Updates
+
+The `Update lottery data` GitHub Actions workflow (`.github/workflows/update-data.yml`) runs
+every day at 14:00 UTC. It:
+1. Runs the tests
+2. Scrapes new drawings through yesterday for both lotteries, re-scraping the last 7 days in
+   case winner counts were revised
+3. Validates the result against data.ny.gov
+4. Commits the updated CSVs to `main` if anything changed
+
+A failure at any step (for example, a site layout change breaking the parser) fails the run
+without committing, and GitHub emails the repository owner. It can also be started by hand
+from the Actions tab, and on pull requests it runs the same checks without committing.
 
 ### Validation Against NY Open Data
 
