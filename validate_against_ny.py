@@ -2,7 +2,8 @@
 Validate the scraped datasets against New York State's open data.
 
 data.ny.gov republishes the official PowerBall and MegaMillions winning numbers.
-For the date range both sources cover, this checks that:
+From each lottery's first drawing (or NY's first record, if later) through NY's
+latest record, this checks that:
 - every drawing NY lists is in our CSV, and vice versa (validates the drawing
   schedule logic and catches skipped or extra dates)
 - the winning numbers, bonus ball and multiplier match (validates that each
@@ -22,6 +23,8 @@ import sys
 from typing import Dict, List, Optional
 
 from lottery_common import configure_console, format_white_balls, make_session, read_csv
+from megamillions_scraper import MegaMillionsScraper
+from powerball_scraper import PowerBallScraper
 
 NY_DATASETS = {
     'powerball': 'https://data.ny.gov/resource/d6yy-54nr.json',
@@ -40,6 +43,11 @@ KNOWN_NY_ERRATA = {
     ('powerball', '2022-03-12'): 'drawing missing from NY data',
     ('powerball', '2022-04-09'): 'drawing missing from NY data',
     ('powerball', '2022-11-07'): 'drawing missing from NY data',
+}
+
+FIRST_DRAWINGS = {
+    'powerball': PowerBallScraper.FIRST_DRAWING,
+    'megamillions': MegaMillionsScraper.FIRST_DRAWING,
 }
 
 HISTORY_FILES = {
@@ -91,20 +99,32 @@ def _int_or_none(value) -> Optional[int]:
     return int(value) if value not in (None, '') else None
 
 
-def compare(lottery: str, ours: List[Dict], ny: Dict[str, Dict]) -> List[Dict]:
-    """Discrepancies between our rows and NY's, over the date range both cover."""
-    ours_by_date = {r['date']: r for r in ours}
-    if not ours_by_date or not ny:
-        return []
-    start = max(min(ours_by_date), min(ny))
-    end = min(max(ours_by_date), max(ny))
+def compare(lottery: str, ours: List[Dict], ny: Dict[str, Dict], first_drawing: str) -> List[Dict]:
+    """
+    Discrepancies between our rows and NY's.
 
+    Every drawing from first_drawing (or NY's first record, if later) through NY's
+    latest record must be present, so the range doesn't depend on our possibly
+    incomplete data. Our drawings newer than NY's latest aren't checked, since the
+    NY data can lag behind the official sites.
+    """
     issues = []
 
     def issue(date, kind, detail):
         known = (lottery, date) in KNOWN_NY_ERRATA
         issues.append({'lottery': lottery, 'date': date, 'issue': kind, 'detail': detail,
                        'known_ny_error': known})
+
+    ours_by_date = {r['date']: r for r in ours}
+    if not ours_by_date:
+        issue('', 'no_local_data', 'our dataset is empty or missing')
+    if not ny:
+        issue('', 'no_ny_data', 'NY returned no records')
+    if issues:
+        return issues
+
+    start = max(first_drawing, min(ny))
+    end = max(ny)
 
     for date in sorted(set(ours_by_date) | set(ny)):
         if not start <= date <= end:
@@ -150,11 +170,11 @@ def main(argv=None) -> int:
     for lottery in args.lotteries or NY_DATASETS:
         ours = read_csv(HISTORY_FILES[lottery])
         ny = fetch_ny(lottery)
-        issues = compare(lottery, ours, ny)
+        issues = compare(lottery, ours, ny, FIRST_DRAWINGS[lottery])
         all_issues.extend(issues)
 
-        print(f"{lottery}: {len(ours)} rows in {HISTORY_FILES[lottery]}, "
-              f"{len(ny)} NY records ({min(ny)} to {max(ny)})")
+        ny_range = f" ({min(ny)} to {max(ny)})" if ny else ""
+        print(f"{lottery}: {len(ours)} rows in {HISTORY_FILES[lottery]}, {len(ny)} NY records{ny_range}")
         for i in issues:
             if i['known_ny_error']:
                 print(f"  known NY error on {i['date']}: {KNOWN_NY_ERRATA[(lottery, i['date'])]}")
@@ -165,7 +185,7 @@ def main(argv=None) -> int:
         if not counts:
             print("  OK - no unexplained discrepancies")
         for kind, count in sorted(counts.items()):
-            examples = ', '.join(i['date'] for i in issues
+            examples = ', '.join(i['date'] or i['detail'] for i in issues
                                  if i['issue'] == kind and not i['known_ny_error'])
             if len(examples) > 70:
                 examples = examples[:70] + '...'

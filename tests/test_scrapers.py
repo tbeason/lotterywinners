@@ -241,13 +241,32 @@ class NyValidationTests(unittest.TestCase):
             ny('2020-01-15', '01 02 03 04 05', 6),          # missing from ours
             ny('2020-01-18', '01 02 03 04 05', 6),
         ]}
-        issues = {(i['date'], i['issue']) for i in compare('powerball', our_rows, ny_rows)}
+        issues = {(i['date'], i['issue'])
+                  for i in compare('powerball', our_rows, ny_rows, first_drawing='2020-01-01')}
         self.assertEqual(issues, {
             ('2020-01-04', 'numbers_mismatch'),
             ('2020-01-08', 'multiplier_mismatch'),
             ('2020-01-11', 'not_in_ny'),
             ('2020-01-15', 'missing'),
         })
+
+    def test_compare_range_comes_from_ny_not_our_data(self):
+        def row(date):
+            return {'date': date, 'white_balls': '01 02 03 04 05', 'bonus_ball': 6, 'multiplier': None}
+
+        # Our data is missing the first and the newest drawings NY has
+        ours = [dict(row('2020-01-04'), bonus_ball='6', multiplier='')]
+        ny = {d: row(d) for d in ['2020-01-01', '2020-01-04', '2020-01-08']}
+        issues = {(i['date'], i['issue']) for i in compare('powerball', ours, ny, '2020-01-01')}
+        self.assertEqual(issues, {('2020-01-01', 'missing'), ('2020-01-08', 'missing')})
+
+    def test_compare_fails_on_empty_data(self):
+        ny = {'2020-01-01': {'date': '2020-01-01', 'white_balls': '01 02 03 04 05',
+                             'bonus_ball': 6, 'multiplier': None}}
+        self.assertEqual([i['issue'] for i in compare('powerball', [], ny, '2020-01-01')],
+                         ['no_local_data'])
+        self.assertEqual([i['issue'] for i in compare('powerball', [{'date': '2020-01-01'}], {}, '2020-01-01')],
+                         ['no_ny_data'])
 
 
 if __name__ == '__main__':

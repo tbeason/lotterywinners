@@ -148,8 +148,10 @@ python validate_against_ny.py --report issues.csv
 
 Compares the datasets with the official winning numbers republished at
 [data.ny.gov](https://data.ny.gov) (PowerBall from 2010-02-03, MegaMillions from 2002).
-Over the overlapping date range it reports drawings missing from either source and any
-mismatched numbers or multipliers, and exits with status 1 if there are discrepancies.
+From each lottery's first drawing (or NY's first record, if later) through NY's latest
+record, it reports drawings missing from either source and any mismatched numbers or
+multipliers. It exits with status 1 if there are discrepancies (other than confirmed errors
+in the NY data) or if a dataset is empty.
 
 ### Tests
 

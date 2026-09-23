@@ -95,8 +95,11 @@ See `SCHEMA_DESIGN.md` for column semantics per lottery and era.
 ### Validation (`validate_against_ny.py`)
 
 - Fetches data.ny.gov's PowerBall (`d6yy-54nr`) and MegaMillions (`5xaw-6ayf`) winning-number datasets
-- Over the date range both sources cover, reports `missing` / `not_in_ny` dates and
-  `numbers_mismatch` / `multiplier_mismatch` / `no_numbers` rows
+- From the lottery's first drawing (or NY's first record) through NY's latest record, reports
+  `missing` / `not_in_ny` dates and `numbers_mismatch` / `multiplier_mismatch` / `no_numbers` rows;
+  the range comes from NY, not our data, so gaps at either end are caught
+- `no_local_data` / `no_ny_data` if either side is empty
+- Confirmed NY errors (cross-checked with the Texas Lottery) live in `KNOWN_NY_ERRATA`
 - Run it after any re-scrape
 
 ### Historical batch runner (`run_history_scrape`)
