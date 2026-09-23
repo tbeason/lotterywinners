@@ -18,7 +18,7 @@ from lottery_common import (  # noqa: E402
 )
 from megamillions_scraper import MegaMillionsScraper, date_to_ticks  # noqa: E402
 from powerball_scraper import PowerBallScraper  # noqa: E402
-from validate_against_ny import compare, parse_ny_record  # noqa: E402
+from validate_data import check_ny, check_schedule, parse_ny_record  # noqa: E402
 
 FIXTURES = os.path.join(os.path.dirname(__file__), 'fixtures')
 
@@ -202,7 +202,21 @@ class MegaMillionsTests(unittest.TestCase):
 
 
 
-class NyValidationTests(unittest.TestCase):
+class ValidationTests(unittest.TestCase):
+
+    def setUp(self):
+        self.scraper = PowerBallScraper()
+
+    def tearDown(self):
+        self.scraper.close()
+
+    @staticmethod
+    def ours(date, whites='01 02 03 04 05', bonus=6, mult=''):
+        return {'date': date, 'white_balls': whites, 'bonus_ball': str(bonus), 'multiplier': mult}
+
+    @staticmethod
+    def ny(date, whites='01 02 03 04 05', bonus=6, mult=None):
+        return {'date': date, 'white_balls': whites, 'bonus_ball': bonus, 'multiplier': mult}
 
     def test_parse_powerball_record(self):
         record = {'draw_date': '2010-02-03T00:00:00.000',
@@ -218,55 +232,58 @@ class NyValidationTests(unittest.TestCase):
             'date': '2026-09-22', 'white_balls': '07 13 26 37 68', 'bonus_ball': 8, 'multiplier': None,
         })
 
-    def test_compare(self):
-        def ours(date, whites, bonus, mult=''):
-            return {'date': date, 'white_balls': whites, 'bonus_ball': str(bonus), 'multiplier': mult}
-
-        def ny(date, whites, bonus, mult=None):
-            return {'date': date, 'white_balls': whites, 'bonus_ball': bonus, 'multiplier': mult}
-
-        our_rows = [
-            ours('2020-01-01', '01 02 03 04 05', 6, '2'),   # matches
-            ours('2020-01-04', '01 02 03 04 05', 6),        # wrong numbers
-            ours('2020-01-08', '01 02 03 04 05', 6, '3'),   # wrong multiplier
-            ours('2020-01-11', '01 02 03 04 05', 6),        # not in NY
-            ours('2020-01-18', '01 02 03 04 05', 6),        # matches (ends overlap)
-            ours('2020-01-22', '01 02 03 04 05', 6),        # outside NY range: ignored
-        ]
-        ny_rows = {r['date']: r for r in [
-            ny('2019-12-28', '09 10 11 12 13', 1),          # before our range: ignored
-            ny('2020-01-01', '01 02 03 04 05', 6, 2),
-            ny('2020-01-04', '01 02 03 04 07', 6),
-            ny('2020-01-08', '01 02 03 04 05', 6, 2),
-            ny('2020-01-15', '01 02 03 04 05', 6),          # missing from ours
-            ny('2020-01-18', '01 02 03 04 05', 6),
-        ]}
-        issues = {(i['date'], i['issue'])
-                  for i in compare('powerball', our_rows, ny_rows, first_drawing='2020-01-01')}
+    def test_schedule_check(self):
+        # Every PowerBall drawing through 2026-09-21, minus the first and one recent one
+        scheduled = self.scraper.get_drawing_dates(PowerBallScraper.FIRST_DRAWING, '2026-09-21')
+        ours = [self.ours(d) for d in scheduled if d not in ('1992-04-22', '2026-09-19')]
+        ours.append(self.ours('2026-09-15'))  # a Tuesday
+        ours.append(self.ours('2026-09-23'))  # after --through: not checked
+        issues = {(i['date'], i['issue']) for i in check_schedule(self.scraper, ours, '2026-09-21')}
         self.assertEqual(issues, {
-            ('2020-01-04', 'numbers_mismatch'),
-            ('2020-01-08', 'multiplier_mismatch'),
-            ('2020-01-11', 'not_in_ny'),
-            ('2020-01-15', 'missing'),
+            ('1992-04-22', 'missing'),       # gaps at the start are caught
+            ('2026-09-19', 'missing'),       # ...and at the end
+            ('2026-09-15', 'unscheduled'),
         })
 
-    def test_compare_range_comes_from_ny_not_our_data(self):
-        def row(date):
-            return {'date': date, 'white_balls': '01 02 03 04 05', 'bonus_ball': 6, 'multiplier': None}
+    def test_schedule_check_fails_on_empty_data(self):
+        issues = check_schedule(self.scraper, [], '2026-09-21')
+        self.assertEqual([i['issue'] for i in issues], ['no_local_data'])
 
-        # Our data is missing the first and the newest drawings NY has
-        ours = [dict(row('2020-01-04'), bonus_ball='6', multiplier='')]
-        ny = {d: row(d) for d in ['2020-01-01', '2020-01-04', '2020-01-08']}
-        issues = {(i['date'], i['issue']) for i in compare('powerball', ours, ny, '2020-01-01')}
-        self.assertEqual(issues, {('2020-01-01', 'missing'), ('2020-01-08', 'missing')})
+    def test_ny_check(self):
+        ours = [
+            self.ours('2026-09-12', mult='2'),                       # matches
+            self.ours('2026-09-14', mult='2'),                       # wrong multiplier
+            self.ours('2026-09-16', whites='01 02 03 04 07'),        # wrong numbers
+            self.ours('2026-09-19'),                                 # not in NY: fine
+            self.ours('2026-09-21', whites=''),                      # no numbers
+        ]
+        ny = {r['date']: r for r in [
+            self.ny('2026-09-12', mult=2),
+            self.ny('2026-09-14', mult=3),
+            self.ny('2026-09-15'),                                   # a Tuesday
+            self.ny('2026-09-16'),
+            self.ny('2026-09-21'),
+            self.ny('2026-09-23'),                                   # after --through
+        ]}
+        issues = {(i['date'], i['issue']) for i in check_ny(self.scraper, ours, ny, '2026-09-21')}
+        self.assertEqual(issues, {
+            ('2026-09-14', 'multiplier_mismatch'),
+            ('2026-09-15', 'ny_unscheduled'),
+            ('2026-09-16', 'numbers_mismatch'),
+            ('2026-09-21', 'no_numbers'),
+        })
 
-    def test_compare_fails_on_empty_data(self):
-        ny = {'2020-01-01': {'date': '2020-01-01', 'white_balls': '01 02 03 04 05',
-                             'bonus_ball': 6, 'multiplier': None}}
-        self.assertEqual([i['issue'] for i in compare('powerball', [], ny, '2020-01-01')],
-                         ['no_local_data'])
-        self.assertEqual([i['issue'] for i in compare('powerball', [{'date': '2020-01-01'}], {}, '2020-01-01')],
-                         ['no_ny_data'])
+    def test_ny_check_fails_on_empty_ny_data(self):
+        issues = check_ny(self.scraper, [self.ours('2026-09-21')], {}, '2026-09-21')
+        self.assertEqual([i['issue'] for i in issues], ['no_ny_data'])
+
+    def test_known_ny_errata_are_flagged(self):
+        with MegaMillionsScraper() as scraper:
+            issues = check_ny(scraper, [self.ours('2011-09-23', whites='21 27 32 40 52', bonus=36)],
+                              {'2011-09-23': self.ny('2011-09-23', whites='27 31 32 40 52', bonus=36)},
+                              '2011-09-23')
+        self.assertEqual([(i['issue'], i['known_ny_error']) for i in issues],
+                         [('numbers_mismatch', True)])
 
 
 if __name__ == '__main__':

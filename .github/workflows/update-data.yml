@@ -39,11 +39,13 @@ jobs:
       - name: Run tests
         run: python -m unittest discover tests
 
+      - name: Set end date
+        # Yesterday: today's drawings haven't happened yet
+        run: echo "END=$(date -u -d yesterday +%F)" >> "$GITHUB_ENV"
+
       - name: Scrape new drawings
-        # Through yesterday (today's drawings haven't happened yet), and re-scrape
-        # the last week in case winner counts were revised after the first scrape
+        # Also re-scrape the last week in case winner counts were revised after the first scrape
         run: |
-          END=$(date -u -d yesterday +%F)
           python scrape_all_history.py --end "$END" --recent 7
           python scrape_all_megamillions.py --end "$END" --recent 7
 
@@ -51,8 +53,8 @@ jobs:
         if: always()
         run: cat *_scraping_errors.csv 2>/dev/null || echo "No scraping errors"
 
-      - name: Validate against data.ny.gov
-        run: python validate_against_ny.py
+      - name: Validate (drawing schedule and data.ny.gov)
+        run: python validate_data.py --through "$END"
 
       - name: Commit updated data
         if: github.event_name != 'pull_request'
@@ -64,7 +66,7 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898299+github-actions[bot]@users.noreply.github.com"
-          git commit -m "Update lottery data through $(date -u -d yesterday +%F)"
+          git commit -m "Update lottery data through $END"
           git push
 
       - name: Show data changes (pull requests)

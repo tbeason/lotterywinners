@@ -28,8 +28,9 @@ python scrape_all_history.py --full
 python scrape_all_history.py --dates 2022-11-07 2016-01-13
 python scrape_all_history.py --recent 7
 
-# Cross-check numbers and drawing dates against data.ny.gov (exit 1 on discrepancies)
-python validate_against_ny.py
+# Check completeness against the drawing schedule and numbers against data.ny.gov
+python validate_data.py              # through yesterday; exit 1 on problems
+python validate_data.py --offline    # schedule check only
 
 # Run custom examples
 python example_usage.py
@@ -88,17 +89,17 @@ See `SCHEMA_DESIGN.md` for column semantics per lottery and era.
 ### Daily update workflow (`.github/workflows/update-data.yml`)
 
 - Runs daily at 14:00 UTC (and on `workflow_dispatch`): tests, then both scrape scripts with
-  `--end <yesterday> --recent 7`, then `validate_against_ny.py`, then commits changed CSVs to `main`
+  `--end <yesterday> --recent 7`, then `validate_data.py --through <yesterday>`, then commits changed CSVs to `main`
 - Any failing step stops the run before the commit
 - On pull requests touching the code it runs the same steps against the live sites but doesn't commit
 
-### Validation (`validate_against_ny.py`)
+### Validation (`validate_data.py`)
 
-- Fetches data.ny.gov's PowerBall (`d6yy-54nr`) and MegaMillions (`5xaw-6ayf`) winning-number datasets
-- From the lottery's first drawing (or NY's first record) through NY's latest record, reports
-  `missing` / `not_in_ny` dates and `numbers_mismatch` / `multiplier_mismatch` / `no_numbers` rows;
-  the range comes from NY, not our data, so gaps at either end are caught
-- `no_local_data` / `no_ny_data` if either side is empty
+- **Completeness comes from the schedule**, not from NY: `check_schedule` reports `missing`
+  (scheduled date through `--through` not in the CSV) and `unscheduled` rows; `no_local_data` if empty
+- **Numbers come from data.ny.gov** (PowerBall `d6yy-54nr`, MegaMillions `5xaw-6ayf`): `check_ny`
+  reports `numbers_mismatch` / `multiplier_mismatch` / `no_numbers`, plus `ny_unscheduled` if NY
+  has a drawing our schedule logic doesn't expect; drawings absent from NY are not errors
 - Confirmed NY errors (cross-checked with the Texas Lottery) live in `KNOWN_NY_ERRATA`
 - Run it after any re-scrape
 
@@ -117,7 +118,7 @@ When modifying scrapers:
 2. If a site's markup or JSON changes, save a new response into `tests/fixtures/` and add a test
 3. Try a recent date range live (e.g. `python scrape_all_history.py --start 2025-10-01 --end 2025-10-31`
    writes to the real dataset; use `scrape_historical_data` + `save_to_csv` for a scratch file)
-4. Run `python validate_against_ny.py` and spot-check for blank winner columns or `N/A` jackpots
+4. Run `python validate_data.py` and spot-check for blank winner columns or `N/A` jackpots
 
 ## Common Pitfalls
 

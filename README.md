@@ -132,26 +132,31 @@ every day at 14:00 UTC. It:
 1. Runs the tests
 2. Scrapes new drawings through yesterday for both lotteries, re-scraping the last 7 days in
    case winner counts were revised
-3. Validates the result against data.ny.gov
+3. Validates the result: every scheduled drawing through yesterday must be present, and
+   winning numbers must match data.ny.gov
 4. Commits the updated CSVs to `main` if anything changed
 
 A failure at any step (for example, a site layout change breaking the parser) fails the run
 without committing, and GitHub emails the repository owner. It can also be started by hand
 from the Actions tab, and on pull requests it runs the same checks without committing.
 
-### Validation Against NY Open Data
+### Validation
 
 ```bash
-python validate_against_ny.py                 # both lotteries
-python validate_against_ny.py --report issues.csv
+python validate_data.py                       # both lotteries, through yesterday
+python validate_data.py --through 2026-09-21 --report issues.csv
+python validate_data.py --offline             # schedule check only
 ```
 
-Compares the datasets with the official winning numbers republished at
-[data.ny.gov](https://data.ny.gov) (PowerBall from 2010-02-03, MegaMillions from 2002).
-From each lottery's first drawing (or NY's first record, if later) through NY's latest
-record, it reports drawings missing from either source and any mismatched numbers or
-multipliers. It exits with status 1 if there are discrepancies (other than confirmed errors
-in the NY data) or if a dataset is empty.
+Two independent checks:
+- **Schedule**: every scheduled drawing from the lottery's first drawing through `--through`
+  must be in the CSV, and no row may fall on an unscheduled date.
+- **data.ny.gov**: the official winning numbers republished at [data.ny.gov](https://data.ny.gov)
+  (PowerBall from 2010-02-03, MegaMillions from 2002) must match ours, and NY must not list a
+  drawing on a date our schedule doesn't expect. Drawings missing from NY's data (it has a few
+  gaps) are counted but aren't errors.
+
+It exits with status 1 on any problem other than confirmed errors in the NY data.
 
 ### Tests
 
@@ -258,7 +263,7 @@ The unified schema provides several advantages:
 - `powerball_scraper.py` - PowerBall scraper class
 - `megamillions_scraper.py` - MegaMillions scraper class
 - `example_usage.py` - Examples, including combining both lotteries into one CSV
-- `validate_against_ny.py` - Cross-checks winning numbers and drawing dates against data.ny.gov
+- `validate_data.py` - Checks the datasets against the drawing schedule and data.ny.gov
 - `scrape_all_history.py` - Full PowerBall historical scraper
 - `scrape_all_megamillions.py` - Full MegaMillions historical scraper
 - `requirements.txt` - Python dependencies

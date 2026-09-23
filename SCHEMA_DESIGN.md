@@ -73,6 +73,6 @@ Two eras, both normalized into the same columns:
   `match_5_mb_*`, `_megaplier_*`). The unified schema added the `lottery` column and uses
   `_bonus` / `_multiplier` for both games.
 - `white_balls`, `bonus_ball` and `multiplier` were added, which also makes it possible to
-  validate the data against an independent source (`validate_against_ny.py`).
+  validate the data against an independent source (`validate_data.py`).
 - `jackpot_usd` and `cash_value_usd` were added so amounts can be analyzed numerically
   without parsing the display strings (40 -> 45 columns in total).
