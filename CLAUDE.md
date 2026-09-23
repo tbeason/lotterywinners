@@ -12,13 +12,25 @@ Lottery Historical Data Scrapers - Python scripts to scrape PowerBall and MegaMi
 # Install dependencies
 pip install -r requirements.txt
 
-# Test scrapers on recent data
+# Run tests (offline; parse saved fixtures in tests/fixtures/)
+python -m unittest discover tests
+
+# Try scrapers on recent data
 python powerball_scraper.py
 python megamillions_scraper.py
 
-# Scrape complete historical data
-python scrape_all_history.py         # PowerBall: 1992-present (~2 hours, 3,722 drawings)
-python scrape_all_megamillions.py    # MegaMillions: 2010-present (~1 hour, 1,646 drawings)
+# Update the historical datasets (only fetches drawings missing from the CSV)
+python scrape_all_history.py         # PowerBall: 1992-present
+python scrape_all_megamillions.py    # MegaMillions: 2010-present
+
+# Re-scrape everything, specific dates, or the last N days
+python scrape_all_history.py --full
+python scrape_all_history.py --dates 2022-11-07 2016-01-13
+python scrape_all_history.py --recent 7
+
+# Check completeness against the drawing schedule and numbers against data.ny.gov
+python validate_data.py              # through yesterday; exit 1 on problems
+python validate_data.py --offline    # schedule check only
 
 # Run custom examples
 python example_usage.py
@@ -26,177 +38,92 @@ python example_usage.py
 
 ## Architecture
 
-### Dual Scraper Design
+### Shared module (`lottery_common.py`)
 
-The codebase implements two separate scrapers with **identical CSV output schemas** but different scraping technologies:
+- `MATCH_LEVELS` / `CSV_COLUMNS`: the unified 45-column schema, defined once
+- `parse_money` / `parse_count` / `format_amount`: handle `$1,000,000`, `$2.04 Billion`, `997.6 Million`
+- `make_session()`: `requests` session with urllib3 `Retry` (backoff on connection errors, 429 and 5xx)
+- `LotteryScraper`: base class with `get_drawing_dates`, `scrape_historical_data`, `save_to_csv`, context manager
+- `run_history_scrape()`: batch runner used by both `scrape_all_*.py` scripts
+- `ScrapeError`: raised when a response doesn't have the expected structure
+
+### Scrapers
+
+Both subclass `LotteryScraper` and implement `drawing_days(day)` and `get_drawing_data(date_str)`.
+`get_drawing_data` returns a row dict keyed by `CSV_COLUMNS`, returns `None` if there was no
+drawing on that date, and raises `requests.RequestException` / `ScrapeError` on failure.
+The parsing step is split out (`PowerBallScraper.parse_page`, `MegaMillionsScraper.parse_response`)
+so tests can run it on saved fixtures.
 
 **PowerBall** (`powerball_scraper.py`)
-- Uses `requests` + `BeautifulSoup` for simple HTTP scraping
-- Scrapes from powerball.com (server-side rendered HTML)
-- Historical data: April 22, 1992 to present
-- Drawing schedule: Wed/Sat (before Aug 23, 2021), Mon/Wed/Sat (after)
+- `requests` + `BeautifulSoup` on `https://www.powerball.com/draw-result?gc=powerball&date=YYYY-MM-DD`
+- For a date without a drawing the site shows the nearest earlier drawing, so the page's
+  `.title-date` is compared with the requested date
+- Numbers from `.number-group-powerball` (`.white-balls`, `.powerball`) and `.multiplier`; absent for early drawings
+- Jackpot/cash from `.estimated-jackpot` / `.cash-value`; prize levels from `table.winners-table`
+- Each table row's level comes from the `.game-balls` element's class (`m5-pb`, `m4`, ...), not row position
+- Schedule: Wed/Sat before 2021-08-23, Mon/Wed/Sat after
 
 **MegaMillions** (`megamillions_scraper.py`)
-- Uses `Selenium` + `ChromeDriver` for JavaScript-rendered pages
-- Scrapes from megamillions.com (client-side rendered)
-- Historical data: February 2, 2010 to present
-- Drawing schedule: Tuesday and Friday only
-- Date encoding: .NET DateTime ticks (100-nanosecond intervals since 0001-01-01)
+- POSTs to the JSON service `cmspages/utilservice.asmx/GetDrawDataByTickWithMatrix`
+  (the endpoint megamillions.com's Previous Drawing page calls); no browser needed
+- Body: `{"PlayDateTicks": "<ticks>"}`, dates as .NET DateTime ticks, computed from calendar
+  days by `date_to_ticks` (don't use `datetime.timestamp()`, which depends on the local timezone)
+- Response `{"d": "<JSON string>"}`; `d` is empty for dates without a drawing
+- Numbers from `Drawing` (`N1`-`N5`, `MBall`, `Megaplier`; `-1` means none)
+- Tier numbers map to match levels through `PrizeMatrix.PrizeTiers` (`TierWhiteBall`, `TierMegaBall`),
+  because tier order differs between prize matrices
+- Two multiplier eras (optional Megaplier until 2025-04-04, built-in multiplier since),
+  see `SCHEMA_DESIGN.md`
+- Schedule: Tuesday and Friday
 
-### Core Scraper Classes
+### Unified CSV Schema (45 columns)
 
-Both classes implement the same interface:
+- Base (9): `lottery`, `date`, `white_balls`, `bonus_ball`, `multiplier`, `jackpot`, `cash_value`, `jackpot_usd`, `cash_value_usd`
+- Match levels (36): 9 levels x (`_winners`, `_prize`, `_multiplier_winners`, `_multiplier_prize`)
+- Level names: `match_5_bonus`, `match_5`, `match_4_bonus`, `match_4`, `match_3_bonus`,
+  `match_3`, `match_2_bonus`, `match_1_bonus`, `match_0_bonus`
 
-```python
-class LotteryScraper:
-    def get_drawing_data(date: str) -> Optional[Dict]
-    def get_drawing_dates(start_date: str, end_date: str) -> List[str]
-    def scrape_historical_data(start_date: str, end_date: str) -> List[Dict]
-    def save_to_csv(data: List[Dict], filename: str)
-```
+See `SCHEMA_DESIGN.md` for column semantics per lottery and era.
 
-### Critical: Drawing Schedule Logic
+### Daily update workflow (`.github/workflows/update-data.yml`)
 
-**PowerBall Schedule Change (2021-08-23)**
-- Before: Wednesday and Saturday only
-- After: Monday, Wednesday, and Saturday
-- The `get_drawing_dates()` method automatically handles this transition
-- Hardcoded in `DRAWING_DAYS` constant and schedule logic
+- Runs daily at 14:00 UTC (and on `workflow_dispatch`): tests, then both scrape scripts with
+  `--end <yesterday> --recent 7`, then `validate_data.py --through <yesterday>`, then commits changed CSVs to `main`
+- Any failing step stops the run before the commit
+- On pull requests touching the code it runs the same steps against the live sites but doesn't commit
 
-**MegaMillions Consistency**
-- Tuesday and Friday throughout entire history
-- No schedule changes since 2010
+### Validation (`validate_data.py`)
 
-### Unified CSV Schema (40 columns)
+- **Completeness comes from the schedule**, not from NY: `check_schedule` reports `missing`
+  (scheduled date through `--through` not in the CSV) and `unscheduled` rows; `no_local_data` if empty
+- **Numbers come from data.ny.gov** (PowerBall `d6yy-54nr`, MegaMillions `5xaw-6ayf`): `check_ny`
+  reports `numbers_mismatch` / `multiplier_mismatch` / `no_numbers`, plus `ny_unscheduled` if NY
+  has a drawing our schedule logic doesn't expect; drawings absent from NY are not errors
+- Confirmed NY errors (cross-checked with the Texas Lottery) live in `KNOWN_NY_ERRATA`
+- Run it after any re-scrape
 
-**Design Rationale**: Both scrapers output identical column names to enable easy data combination.
+### Historical batch runner (`run_history_scrape`)
 
-**Base Columns (4)**:
-- `lottery`: Identifier ("powerball" or "megamillions")
-- `date`: Drawing date (YYYY-MM-DD)
-- `jackpot`: Estimated jackpot (e.g., "175 Million")
-- `cash_value`: Cash alternative (e.g., "81.2 Million")
-
-**Match Level Columns (36)**: 9 levels × 4 columns each
-- `match_X_bonus_*`: Match with bonus ball (PowerBall/MegaBall)
-- `match_X_*`: Match without bonus ball
-- `*_winners` / `*_prize`: Regular winner count and prize amount
-- `*_multiplier_winners` / `*_multiplier_prize`: Multiplier (Power Play/Megaplier) data
-
-**Critical Schema Transformation**:
-- PowerBall: `match_5_pb_*` → `match_5_bonus_*`, `_pp_*` → `_multiplier_*`
-- MegaMillions: `match_5_mb_*` → `match_5_bonus_*`, `_megaplier_*` → `_multiplier_*`
-
-See `SCHEMA_DESIGN.md` for complete mapping details.
-
-### HTML/DOM Parsing Strategies
-
-**PowerBall (BeautifulSoup)**:
-- Target: `<table class="winners-table">`
-- Hardcoded match levels map to table row positions (order-dependent!)
-- Row structure: [Match description, PB Winners, PB Prize, PP Winners, PP Prize]
-- Uses regex fallbacks for jackpot extraction
-
-**MegaMillions (Selenium)**:
-- Waits for JavaScript to populate data: `WebDriverWait` on `js_pastJackpot` class
-- Target: `<table class="tableJackpotWinningNumbersNew">`
-- Same row structure as PowerBall
-- Requires ChromeDriver (managed automatically by webdriver-manager)
-
-### Historical Batch Scrapers
-
-Both `scrape_all_history.py` and `scrape_all_megamillions.py` implement:
-- Auto-save every 50 drawings to `*_partial.csv`
-- Resume capability (checks for partial file, prompts to continue)
-- Rate limiting: 0.5 seconds between requests
-- Error logging to `*_scraping_errors.csv`
-- Progress tracking with percentage completion
-- Final output: `*_all_history.csv`
-
-**Important**: Auto-save uses ASCII characters (>>) not Unicode (→) to avoid encoding errors on Windows console.
-
-## Important Implementation Details
-
-### Date Handling
-
-**PowerBall**: Simple date parameter in URL
-```
-https://www.powerball.com/draw-result?gc=powerball&date=2024-10-01
-```
-
-**MegaMillions**: .NET DateTime ticks encoding
-```python
-def datetime_to_ticks(dt):
-    epoch_offset = 621355968000000000
-    unix_timestamp = dt.timestamp()
-    return int(unix_timestamp * 10000000 + epoch_offset)
-
-url = f"{BASE_URL}?date={ticks}"
-# https://www.megamillions.com/...?date=638659440000000000
-```
-
-### Match Levels (Consistent Across Both Lotteries)
-
-Order matters! Hardcoded to match table row order:
-1. Match 5 + Bonus (Jackpot)
-2. Match 5 ($1 Million)
-3. Match 4 + Bonus
-4. Match 4
-5. Match 3 + Bonus
-6. Match 3
-7. Match 2 + Bonus
-8. Match 1 + Bonus
-9. Match 0 + Bonus (Bonus ball only)
-
-### Multiplier Data Handling
-
-Both scrapers extract multiplier (Power Play/Megaplier) data when available:
-- Stored in separate columns: `*_multiplier_winners`, `*_multiplier_prize`
-- May be `None` if multiplier wasn't available historically
-- CSV writer uses `extrasaction='ignore'` to handle missing columns
-
-### Error Handling Strategy
-
-**Network Errors**: Logged but scraping continues
-- Allows partial dataset completion even with intermittent failures
-- Error details saved to `*_scraping_errors.csv`
-
-**Missing Data**: Returns "N/A" for jackpot/cash value
-- Ensures CSV rows are always complete
-- Missing prize data handled gracefully
-
-**Encoding Errors**: Unicode characters avoided in console output
-- Windows console (cp1252) cannot handle Unicode arrow (→)
-- Use ASCII alternatives (>>) in print statements
-
-## Data Sources and Scraping Methods
-
-**PowerBall**: powerball.com - server-side rendered (simple HTTP)
-- URL pattern: `/draw-result?gc=powerball&date=YYYY-MM-DD`
-- BeautifulSoup parses static HTML
-- Fast and reliable
-
-**MegaMillions**: megamillions.com - client-side rendered (JavaScript)
-- URL pattern: `/Previous-Drawing-Page.aspx?date={ticks}`
-- Selenium renders JavaScript before extraction
-- Slower but handles dynamic content
-- Requires Chrome browser installed
+- Loads the existing `*_all_history.csv` and fetches only missing drawings (unless `--full` / `--dates`)
+- Saves progress to `*_partial.csv` every 50 drawings and on Ctrl+C; the next run resumes from it
+- Writes the merged, sorted dataset back to `*_all_history.csv` atomically, then deletes the partial file
+- Failed dates (with the exception message) go to `*_scraping_errors.csv`
+- 0.5 seconds between requests (`--delay`)
 
 ## Testing and Development
 
 When modifying scrapers:
-1. Test with recent dates first (e.g., last month)
-2. Verify CSV output has exactly 40 columns
-3. Check `lottery` column populates correctly
-4. Confirm match level columns use unified naming (bonus/multiplier)
-5. Test auto-save functionality triggers at 50-drawing intervals
-6. Verify encoding issues don't occur (no Unicode in print statements)
+1. Run `python -m unittest discover tests`
+2. If a site's markup or JSON changes, save a new response into `tests/fixtures/` and add a test
+3. Try a recent date range live (e.g. `python scrape_all_history.py --start 2025-10-01 --end 2025-10-31`
+   writes to the real dataset; use `scrape_historical_data` + `save_to_csv` for a scratch file)
+4. Run `python validate_data.py` and spot-check for blank winner columns or `N/A` jackpots
 
 ## Common Pitfalls
 
-1. **Match level order**: Hardcoded to table row positions - changing order breaks parsing
-2. **Drawing schedule**: Must respect historical schedule changes (PowerBall 2021-08-23)
-3. **Date format**: Must be YYYY-MM-DD for PowerBall, converted to ticks for MegaMillions
-4. **Selenium cleanup**: Always use context manager (`with`) or call `.close()` explicitly
-5. **Schema consistency**: Both scrapers must output identical column names
-6. **Unicode in console**: Avoid non-ASCII characters in print statements (Windows encoding issues)
+1. **Row order**: don't map prize levels by position; both sites vary the order across eras
+2. **Non-drawing dates**: PowerBall silently returns a different drawing; always check the date
+3. **Money strings**: jackpots can be in billions; use `parse_money`, not ad-hoc regexes
+4. **Schema consistency**: add columns only in `lottery_common.CSV_COLUMNS`
+5. **Drawing schedule**: must respect historical schedule changes (PowerBall 2021-08-23)

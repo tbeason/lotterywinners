@@ -1,44 +1,43 @@
 """
-Example usage of the PowerBall scraper.
+Example usage of the PowerBall and MegaMillions scrapers.
 
-This script shows how to scrape PowerBall historical data
-and save it to a CSV file.
+Shows how to fetch single drawings, scrape a date range, and combine both
+lotteries into one CSV file.
 """
 
+from lottery_common import write_csv
+from megamillions_scraper import MegaMillionsScraper
 from powerball_scraper import PowerBallScraper
 
 
 def main():
-    # Create scraper instance
-    scraper = PowerBallScraper()
+    powerball = PowerBallScraper()
+    megamillions = MegaMillionsScraper()
 
     # Example 1: Get a single drawing
     print("=== Example 1: Single Drawing ===")
-    result = scraper.get_drawing_data('2025-10-01')
+    result = powerball.get_drawing_data('2025-10-01')
     if result:
         print(f"Date: {result['date']}")
-        print(f"Jackpot: {result['jackpot']}")
+        print(f"Jackpot: {result['jackpot']} (${result['jackpot_usd']:,})")
         print(f"Cash Value: {result['cash_value']}")
-        print(f"Number of prize levels: {len(result['prize_levels'])}")
+        print(f"Jackpot winners: {result['match_5_bonus_winners']}")
         print()
 
     # Example 2: Get historical data for a date range
     print("=== Example 2: Historical Data ===")
-    print("Scraping drawings from October 1 to October 31, 2025...")
+    powerball_data = powerball.scrape_historical_data('2025-10-01', '2025-10-31')
+    megamillions_data = megamillions.scrape_historical_data('2025-10-01', '2025-10-31')
 
-    # Note: PowerBall drawings are on Monday, Wednesday, and Saturday
-    historical_data = scraper.scrape_historical_data('2025-10-01', '2025-10-31')
-
-    # Save to CSV
-    scraper.save_to_csv(historical_data, 'october_2025_powerball.csv')
-    print(f"Saved {len(historical_data)} drawings to october_2025_powerball.csv")
+    # Both scrapers use the same columns, so their rows can be combined directly
+    write_csv(powerball_data + megamillions_data, 'october_2025_lotteries.csv')
+    print(f"Saved {len(powerball_data) + len(megamillions_data)} drawings to october_2025_lotteries.csv")
     print()
 
     # Example 3: Get specific drawing dates
     print("=== Example 3: Drawing Dates ===")
-    dates = scraper.get_drawing_dates('2025-10-01', '2025-10-15')
-    print(f"PowerBall drawing dates from Oct 1-15, 2025:")
-    for date in dates:
+    print("PowerBall drawing dates from Oct 1-15, 2025:")
+    for date in powerball.get_drawing_dates('2025-10-01', '2025-10-15'):
         print(f"  - {date}")
 
 
