@@ -7,6 +7,7 @@ Scrapes PowerBall drawing results from powerball.com including:
 - Number of winners and prize at each prize level, with and without Power Play
 """
 
+import gzip
 import re
 from datetime import date, datetime
 from typing import Dict, Iterable, Optional
@@ -49,7 +50,29 @@ class PowerBallScraper(LotteryScraper):
             self.BASE_URL, params={'gc': 'powerball', 'date': date_str}, timeout=30
         )
         response.raise_for_status()
-        return self.parse_page(response.content, date_str)
+        try:
+            return self.parse_page(self._body(response), date_str)
+        except ScrapeError as e:
+            # Say what came back, so a changed or garbled response can be told apart from a markup change
+            raise ScrapeError(f'{e} ({self._describe(response)})') from None
+
+    @staticmethod
+    def _body(response) -> bytes:
+        """Response body, gunzipped if the site sent gzip without a Content-Encoding header."""
+        body = response.content
+        if body[:2] == b'\x1f\x8b':
+            try:
+                return gzip.decompress(body)
+            except (OSError, EOFError):
+                pass
+        return body
+
+    @staticmethod
+    def _describe(response) -> str:
+        headers = response.headers
+        return (f"HTTP {response.status_code}, Content-Type {headers.get('Content-Type')!r}, "
+                f"Content-Encoding {headers.get('Content-Encoding')!r}, "
+                f"{len(response.content)} bytes starting {response.content[:12].hex(' ')}")
 
     def parse_page(self, html: bytes, date_str: str) -> Optional[Dict]:
         """Parse a draw-result page into a row."""

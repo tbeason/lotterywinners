@@ -4,12 +4,15 @@ Parser tests against saved responses, so they run without network access.
     python -m unittest discover tests
 """
 
+import gzip
 import json
 import os
 import sys
 import tempfile
 import unittest
 from datetime import date
+
+import requests
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
@@ -118,6 +121,27 @@ class PowerBallTests(unittest.TestCase):
     def test_non_drawing_date_returns_none(self):
         # The site shows the previous drawing (Mon Nov 24) for Tuesday Nov 25
         self.assertIsNone(self.scraper.parse_page(fixture('powerball_2025-11-25.html'), '2025-11-25'))
+
+    def _serve(self, body, encoding=None):
+        response = requests.Response()
+        response.status_code = 200
+        response._content = body
+        response.headers['Content-Type'] = 'text/html; charset=UTF-8'
+        if encoding:
+            response.headers['Content-Encoding'] = encoding
+        self.scraper.session.get = lambda *args, **kwargs: response
+
+    def test_gzip_body_without_header_is_decoded(self):
+        self._serve(gzip.compress(fixture('powerball_2022-11-07.html')))
+        row = self.scraper.get_drawing_data('2022-11-07')
+        self.assertEqual(row['date'], '2022-11-07')
+
+    def test_undecodable_body_error_names_the_response(self):
+        self._serve(b'\x8b\x0b\x80' + bytes(range(256)) * 20, encoding='br')
+        with self.assertLogs(level='WARNING'), self.assertRaises(ScrapeError) as ctx:
+            self.scraper.get_drawing_data('2022-11-07')
+        self.assertIn("Content-Encoding 'br'", str(ctx.exception))
+        self.assertIn('draw date not found', str(ctx.exception))
 
     def test_drawing_schedule_change(self):
         dates = self.scraper.get_drawing_dates('2021-08-16', '2021-08-28')
