@@ -1,2 +1,4 @@
 requests>=2.31.0
 beautifulsoup4>=4.12.0
+# Decode brotli/zstd responses; without these, a br/zstd page arrives as undecodable bytes
+urllib3[brotli,zstd]>=2.0
